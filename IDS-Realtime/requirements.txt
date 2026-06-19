@@ -1,0 +1,19 @@
+# Machine Learning
+numpy
+pandas
+scikit-learn==1.6.1
+joblib
+xgboost
+
+# Kafka
+kafka-python
+
+# Spark
+pyspark==4.1.2
+
+# Database
+pymongo
+
+# Dashboard
+streamlit
+plotly
