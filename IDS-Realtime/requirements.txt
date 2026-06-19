@@ -5,6 +5,10 @@ scikit-learn==1.6.1
 joblib
 xgboost
 
+# Deep Learning
+keras==3.14.1
+torch==2.12.1
+
 # Kafka
 kafka-python
 
