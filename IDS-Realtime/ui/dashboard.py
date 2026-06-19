@@ -187,8 +187,8 @@ else:
         attack_flows = len(df[df['status'] == 'ATTACK'])
         
         # Unique attack types excluding None or NORMAL
-        attack_types_df = df[(df['status'] == 'ATTACK') & (df['attack_type'] != 'None')]
-        unique_attack_types = attack_types_df['attack_type'].nunique()
+        attack_types_df = df[(df['status'] == 'ATTACK') & (df.get('xgb_attack_type', pd.Series(['None']*len(df))) != 'None')]
+        unique_attack_types = attack_types_df['xgb_attack_type'].nunique() if 'xgb_attack_type' in df.columns else df[df['status']=='ATTACK']['status'].count()
         
         # Render KPIs
         col1, col2, col3, col4 = st.columns(4)
@@ -231,38 +231,53 @@ else:
         with chart_col2:
             st.subheader("🔥 Répartition des Types d'Attaques (XGBoost)")
             if not attack_types_df.empty:
-                # Map codes to human readable
                 attack_types_mapped = attack_types_df.copy()
-                attack_types_mapped['attack_name'] = attack_types_mapped['attack_type'].map(
-                    lambda x: f"{ATTACK_LABELS_MAP.get(str(x), str(x))} (Code {x})" if str(x) != "None" else "None"
+                attack_types_mapped['attack_name'] = attack_types_mapped['xgb_attack_type'].map(
+                    lambda x: f"{ATTACK_LABELS_MAP.get(str(x), str(x))} (Code {x})" if str(x) not in ("None", "nan") else "None"
                 )
-                
                 attack_counts = attack_types_mapped['attack_name'].value_counts().reset_index()
                 attack_counts.columns = ["Type d'Attaque", 'Nombre']
-                
-                # Sort ascending for horizontal bar chart
                 attack_counts = attack_counts.sort_values(by='Nombre', ascending=True)
-                
                 fig_bar = px.bar(
-                    attack_counts,
-                    y="Type d'Attaque",
-                    x='Nombre',
-                    orientation='h',
-                    color='Nombre',
-                    color_continuous_scale='Reds',
-                    template="plotly_dark"
+                    attack_counts, y="Type d'Attaque", x='Nombre',
+                    orientation='h', color='Nombre',
+                    color_continuous_scale='Reds', template="plotly_dark"
                 )
                 fig_bar.update_layout(
-                    plot_bgcolor='rgba(0,0,0,0)',
-                    paper_bgcolor='rgba(0,0,0,0)',
+                    plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
                     xaxis=dict(showgrid=True, gridcolor='#30363d'),
                     yaxis=dict(showgrid=False),
-                    margin=dict(t=20, b=20, l=20, r=20),
-                    coloraxis_showscale=False
+                    margin=dict(t=20, b=20, l=20, r=20), coloraxis_showscale=False
                 )
                 st.plotly_chart(fig_bar, use_container_width=True)
             else:
                 st.info("Aucune attaque détectée pour le moment. En attente de trafic malveillant...")
+
+        # DL chart
+        st.markdown("---")
+        st.subheader("🧠 Prédictions Deep Learning (CNN-BiLSTM-Transformer)")
+        if 'dl_prediction' in df.columns:
+            dl_attack_df = df[df['status'] == 'ATTACK']
+            if not dl_attack_df.empty:
+                dl_counts = dl_attack_df['dl_prediction'].value_counts().reset_index()
+                dl_counts.columns = ["Type d'Attaque (DL)", 'Nombre']
+                dl_counts = dl_counts.sort_values(by='Nombre', ascending=True)
+                fig_dl = px.bar(
+                    dl_counts, y="Type d'Attaque (DL)", x='Nombre',
+                    orientation='h', color='Nombre',
+                    color_continuous_scale='Purples', template="plotly_dark"
+                )
+                fig_dl.update_layout(
+                    plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
+                    xaxis=dict(showgrid=True, gridcolor='#30363d'),
+                    yaxis=dict(showgrid=False),
+                    margin=dict(t=20, b=20, l=20, r=20), coloraxis_showscale=False
+                )
+                st.plotly_chart(fig_dl, use_container_width=True)
+            else:
+                st.info("Aucune attaque détectée par le modèle DL pour le moment.")
+        else:
+            st.info("Les prédictions DL apparaîtront après la prochaine exécution du pipeline.")
 
         st.markdown("---")
         
@@ -296,9 +311,15 @@ else:
             display_df['rf_prediction'] = display_df['rf_prediction'].map(
                 lambda x: f"{ATTACK_LABELS_MAP.get(str(x), str(x))} ({x})" if str(x) != "None" else "None"
             )
-            display_df['attack_type'] = display_df['attack_type'].map(
-                lambda x: f"{ATTACK_LABELS_MAP.get(str(x), str(x))} ({x})" if str(x) != "None" else "None"
-            )
+            if 'xgb_attack_type' in display_df.columns:
+                display_df['xgb_attack_type'] = display_df['xgb_attack_type'].map(
+                    lambda x: f"{ATTACK_LABELS_MAP.get(str(x), str(x))} ({x})" if str(x) not in ("None", "nan") else "None"
+                )
+            # legacy support
+            if 'attack_type' in display_df.columns and 'xgb_attack_type' not in display_df.columns:
+                display_df['attack_type'] = display_df['attack_type'].map(
+                    lambda x: f"{ATTACK_LABELS_MAP.get(str(x), str(x))} ({x})" if str(x) != "None" else "None"
+                )
             
             # Style helper
             def highlight_status(row):
@@ -319,13 +340,15 @@ else:
             st.dataframe(
                 styled_table,
                 column_config={
-                    "timestamp": "Horodatage",
-                    "flow_id": "ID Flux",
-                    "true_label": "Vraie Classe",
-                    "rf_prediction": "Préd. Random Forest",
-                    "status": "Statut final",
-                    "attack_type": "Classe d'Attaque (XGBoost)",
-                    "model_used": "Modèle Utilisé"
+                    "timestamp":      "Horodatage",
+                    "flow_id":        "ID Flux",
+                    "true_label":     "Vraie Classe",
+                    "rf_prediction":  "Préd. Random Forest",
+                    "dl_prediction":  "Préd. Deep Learning",
+                    "xgb_attack_type": "Type Attaque (XGBoost)",
+                    "attack_type":    "Type Attaque (XGBoost)",
+                    "status":         "Statut",
+                    "model_used":     "Modèle Utilisé"
                 },
                 use_container_width=True,
                 hide_index=True
