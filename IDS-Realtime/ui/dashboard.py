@@ -1,362 +1,293 @@
-import streamlit as st
-import pandas as pd
-from pymongo import MongoClient
-import plotly.express as px
+import os
 import time
+import pandas as pd
+import streamlit as st
+import plotly.express as px
+import plotly.graph_objects as go
+from pymongo import MongoClient
 from datetime import datetime
 
-# Setup page config
 st.set_page_config(
-    page_title="IDS Real-time Dashboard",
+    page_title="IDS Real-time",
     page_icon="🛡️",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
-# Custom CSS for a premium look
 st.markdown("""
 <style>
-    /* Main container background */
-    .stApp {
-        background-color: #0d1117;
-        color: #c9d1d9;
-    }
-    
-    /* Header customizations */
-    h1, h2, h3 {
-        color: #ffffff !important;
-        font-family: 'Inter', sans-serif;
-    }
-    
-    /* KPI Card styling */
-    .kpi-card {
-        background-color: #161b22;
-        border: 1px solid #30363d;
-        border-radius: 8px;
-        padding: 20px;
-        text-align: center;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-        transition: transform 0.2s, border-color 0.2s;
-    }
-    .kpi-card:hover {
-        transform: translateY(-2px);
-        border-color: #58a6ff;
-    }
-    .kpi-title {
-        font-size: 0.85rem;
-        color: #8b949e;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-        font-weight: 600;
-        margin-bottom: 8px;
-    }
-    .kpi-value {
-        font-size: 2.2rem;
-        font-weight: 800;
-    }
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
+* { font-family: 'Inter', sans-serif; }
+.stApp { background: #060b14; color: #e2e8f0; }
+section[data-testid="stSidebar"] { background: #0d1520; border-right: 1px solid #1e2d3d; }
+.kpi {
+    background: linear-gradient(135deg, #0d1520 0%, #111c2a 100%);
+    border: 1px solid #1e2d3d;
+    border-radius: 12px;
+    padding: 22px 20px;
+    text-align: center;
+}
+.kpi-label { font-size: 0.72rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.1em; font-weight: 600; margin-bottom: 6px; }
+.kpi-val { font-size: 2.4rem; font-weight: 800; line-height: 1; }
+.kpi-sub { font-size: 0.75rem; color: #475569; margin-top: 4px; }
+.live-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: rgba(16,185,129,0.1); border: 1px solid rgba(16,185,129,0.3);
+    border-radius: 20px; padding: 4px 12px; font-size: 0.75rem; color: #10b981; font-weight: 600;
+}
+.live-dot { width:8px; height:8px; background:#10b981; border-radius:50%; animation: pulse 1.5s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+.section-title { font-size: 0.8rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.1em; font-weight: 600; margin-bottom: 12px; }
+.alert-row-attack { background: rgba(239,68,68,0.07); border-left: 3px solid #ef4444; }
+.alert-row-normal { background: rgba(16,185,129,0.05); border-left: 3px solid #10b981; }
+div[data-testid="stDataFrame"] { border-radius: 10px; overflow: hidden; }
+.stRadio > div { flex-direction: row; gap: 12px; }
 </style>
 """, unsafe_allow_html=True)
 
-# Helper function to render metric card
-def render_metric_card(title, value, color, icon=""):
-    return f"""
-    <div class="kpi-card">
-        <div class="kpi-title">{icon} {title}</div>
-        <div class="kpi-value" style="color: {color};">{value}</div>
-    </div>
-    """
-
-# Standard CIC-IDS2017 label mapping
-ATTACK_LABELS_MAP = {
-    "0": "BENIGN",
-    "1": "Bot",
-    "2": "DDoS",
-    "3": "DoS GoldenEye",
-    "4": "DoS Hulk",
-    "5": "DoS Slowhttptest",
-    "6": "DoS slowloris",
-    "7": "FTP-Patator",
-    "8": "Heartbleed",
-    "9": "Infiltration",
-    "10": "PortScan",
-    "11": "SSH-Patator",
-    "12": "Web Attack – Brute Force",
-    "13": "Web Attack – Sql Injection",
-    "14": "Web Attack – XSS",
-    "None": "None",
-    "unknown": "Inconnu"
+ATTACK_LABELS = {
+    "0":"BENIGN","1":"Bot","2":"DDoS","3":"DoS GoldenEye","4":"DoS Hulk",
+    "5":"DoS Slowhttptest","6":"DoS Slowloris","7":"FTP-Patator","8":"Heartbleed",
+    "9":"Infiltration","10":"PortScan","11":"SSH-Patator",
+    "12":"Web Attack Brute Force","13":"Web Attack SQL Injection","14":"Web Attack XSS",
 }
 
-# Sidebar configuration
-st.sidebar.image("https://img.icons8.com/nolan/96/shield.png", width=70)
-st.sidebar.title("Configuration")
+CHART_COLORS = ["#6366f1","#8b5cf6","#ec4899","#f97316","#eab308",
+                "#10b981","#06b6d4","#3b82f6","#ef4444","#84cc16","#f43f5e"]
 
-mongo_uri = st.sidebar.text_input("URI MongoDB", "mongodb://localhost:27017/")
-db_name = st.sidebar.text_input("Base de données", "ids_db")
-collection_name = st.sidebar.text_input("Collection", "predictions")
-
-# Auto refresh configuration
-st.sidebar.markdown("---")
-st.sidebar.subheader("Rafraîchissement")
-auto_refresh = st.sidebar.checkbox("Rafraîchissement automatique", value=True)
-refresh_interval = st.sidebar.slider("Intervalle (secondes)", min_value=1, max_value=30, value=3)
-
-# Data Retrieval function
-def load_data(uri, database, collection):
-    try:
-        client = MongoClient(uri, serverSelectionTimeoutMS=2000)
-        client.server_info()  # Force connection verification
-        db = client[database]
-        col = db[collection]
-        cursor = col.find()
-        df = pd.DataFrame(list(cursor))
-        return df, True, None
-    except Exception as e:
-        return pd.DataFrame(), False, str(e)
-
-# Manual refresh button in sidebar
-if st.sidebar.button("🔄 Actualiser maintenant", use_container_width=True):
-    st.rerun()
-
-# Database Purge Option (Helper tool)
-if st.sidebar.checkbox("Options de nettoyage"):
-    st.sidebar.warning("Purge de la base de données predictions.")
-    if st.sidebar.button("⚠️ Vider la collectionpredictions", use_container_width=True):
-        try:
-            client = MongoClient(mongo_uri)
-            client[db_name][collection_name].drop()
-            st.sidebar.success("Collection predictions vidée avec succès !")
-            time.sleep(1)
+# ── Sidebar ──────────────────────────────────────────────────────────────────
+with st.sidebar:
+    st.markdown("### ⚙️ Configuration")
+    mongo_uri       = st.text_input("MongoDB URI", "mongodb://localhost:27017/")
+    db_name         = st.text_input("Database", "ids_db")
+    collection_name = st.text_input("Collection", "predictions")
+    st.markdown("---")
+    refresh_interval = st.slider("Refresh (s)", 1, 15, 2)
+    if st.button("🔄 Refresh now", use_container_width=True):
+        st.rerun()
+    st.markdown("---")
+    if st.checkbox("🗑️ Clear database"):
+        st.warning("This will delete all predictions.")
+        if st.button("Confirm delete", use_container_width=True):
+            MongoClient(mongo_uri)[db_name][collection_name].drop()
             st.rerun()
-        except Exception as e:
-            st.sidebar.error(f"Erreur : {e}")
 
-# Header
-st.markdown("<h1 style='text-align: center; margin-bottom: 25px;'>🛡️ IDS Real-time Monitoring Dashboard</h1>", unsafe_allow_html=True)
-st.markdown("<p style='text-align: center; color: #8b949e; font-size: 1.1rem; margin-top:-20px; margin-bottom: 30px;'>Visualisation en temps réel du trafic réseau et détection d'intrusions (CIC-IDS2017)</p>", unsafe_allow_html=True)
+# ── Load data ─────────────────────────────────────────────────────────────────
+@st.cache_data(ttl=1)
+def load(_uri, _db, _col):
+    try:
+        client = MongoClient(_uri, serverSelectionTimeoutMS=2000)
+        client.server_info()
+        df = pd.DataFrame(list(client[_db][_col].find()))
+        return df, True
+    except Exception as e:
+        return pd.DataFrame(), False
 
-# Fetch data
-df, connected, error_msg = load_data(mongo_uri, db_name, collection_name)
+df, ok = load(mongo_uri, db_name, collection_name)
 
-if not connected:
-    st.sidebar.error("🔴 MongoDB Déconnecté")
-    st.error(f"### ❌ Impossible de se connecter à MongoDB\n**Détail de l'erreur :** `{error_msg}`")
-    st.info("💡 Veuillez vérifier que votre serveur MongoDB est en cours d'exécution sur le port 27017.")
-else:
-    st.sidebar.success("🟢 MongoDB Connecté")
-
-    # If the collection is empty
-    if df.empty:
-        # Display empty state KPI cards
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.markdown(render_metric_card("Total Flux", 0, "#58a6ff", "📊"), unsafe_allow_html=True)
-        with col2:
-            st.markdown(render_metric_card("Normal", 0, "#2ea043", "🟢"), unsafe_allow_html=True)
-        with col3:
-            st.markdown(render_metric_card("Attack", 0, "#f85149", "🔴"), unsafe_allow_html=True)
-        with col4:
-            st.markdown(render_metric_card("Types d'Attaque", 0, "#ab7df8", "🔥"), unsafe_allow_html=True)
-            
-        st.markdown("---")
-        st.info("ℹ️ **Aucune donnée disponible pour le moment.** La collection MongoDB `predictions` est vide.\n\nVeuillez démarrer votre **Producer Kafka** et le **Spark Structured Streaming** pour alimenter la base de données.")
-        st.markdown(
-            """
-            <div style="background-color: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-top: 20px;">
-                <h4 style="margin-top: 0; color: #ffffff;">⚙️ Instructions de démarrage rapide</h4>
-                <ol>
-                    <li>Démarrer Zookeeper et Kafka</li>
-                    <li>Lancer le Producer : <code style="color: #ff7b72;">python producer/kafka_producer.py</code></li>
-                    <li>Lancer Spark Streaming : <code style="color: #ff7b72;">spark-submit --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.x.x spark/spark_streaming_prediction.py</code></li>
-                </ol>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+# ── Header ────────────────────────────────────────────────────────────────────
+h1, h2 = st.columns([3, 1])
+with h1:
+    st.markdown("## 🛡️ Network Intrusion Detection — Live Monitor")
+    st.caption("CIC-IDS2017 · Random Forest + XGBoost + CNN-BiLSTM-Transformer")
+with h2:
+    st.markdown("<br>", unsafe_allow_html=True)
+    if ok:
+        st.markdown('<div class="live-badge"><div class="live-dot"></div>LIVE</div>', unsafe_allow_html=True)
     else:
-        # Preprocessing
-        if '_id' in df.columns:
-            df = df.drop(columns=['_id'])
-            
-        if 'timestamp' in df.columns:
-            df['timestamp'] = pd.to_datetime(df['timestamp'])
-            
-        # Calculation of KPIs
-        total_flows = len(df)
-        normal_flows = len(df[df['status'] == 'NORMAL'])
-        attack_flows = len(df[df['status'] == 'ATTACK'])
-        
-        # Unique attack types excluding None or NORMAL
-        attack_types_df = df[(df['status'] == 'ATTACK') & (df.get('xgb_attack_type', pd.Series(['None']*len(df))) != 'None')]
-        unique_attack_types = attack_types_df['xgb_attack_type'].nunique() if 'xgb_attack_type' in df.columns else df[df['status']=='ATTACK']['status'].count()
-        
-        # Render KPIs
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.markdown(render_metric_card("Total Flux", f"{total_flows:,}", "#58a6ff", "📊"), unsafe_allow_html=True)
-        with col2:
-            st.markdown(render_metric_card("Normal", f"{normal_flows:,}", "#2ea043", "🟢"), unsafe_allow_html=True)
-        with col3:
-            st.markdown(render_metric_card("Attack", f"{attack_flows:,}", "#f85149", "🔴"), unsafe_allow_html=True)
-        with col4:
-            st.markdown(render_metric_card("Types d'Attaque", unique_attack_types, "#ab7df8", "🔥"), unsafe_allow_html=True)
-            
-        st.markdown("---")
-        
-        # Charts section
-        chart_col1, chart_col2 = st.columns(2)
-        
-        with chart_col1:
-            st.subheader("📊 Répartition Globale (NORMAL vs ATTACK)")
-            status_counts = df['status'].value_counts().reset_index()
-            status_counts.columns = ['Statut', 'Nombre']
-            
-            fig_pie = px.pie(
-                status_counts,
-                names='Statut',
-                values='Nombre',
-                hole=0.4,
-                color='Statut',
-                color_discrete_map={'NORMAL': '#2ea043', 'ATTACK': '#f85149'},
-                template="plotly_dark"
-            )
-            fig_pie.update_layout(
-                plot_bgcolor='rgba(0,0,0,0)',
-                paper_bgcolor='rgba(0,0,0,0)',
-                margin=dict(t=20, b=20, l=20, r=20),
-                legend=dict(orientation="h", yanchor="bottom", y=-0.1, xanchor="center", x=0.5)
-            )
-            st.plotly_chart(fig_pie, use_container_width=True)
-            
-        with chart_col2:
-            st.subheader("🔥 Répartition des Types d'Attaques (XGBoost)")
-            if not attack_types_df.empty:
-                attack_types_mapped = attack_types_df.copy()
-                attack_types_mapped['attack_name'] = attack_types_mapped['xgb_attack_type'].map(
-                    lambda x: f"{ATTACK_LABELS_MAP.get(str(x), str(x))} (Code {x})" if str(x) not in ("None", "nan") else "None"
-                )
-                attack_counts = attack_types_mapped['attack_name'].value_counts().reset_index()
-                attack_counts.columns = ["Type d'Attaque", 'Nombre']
-                attack_counts = attack_counts.sort_values(by='Nombre', ascending=True)
-                fig_bar = px.bar(
-                    attack_counts, y="Type d'Attaque", x='Nombre',
-                    orientation='h', color='Nombre',
-                    color_continuous_scale='Reds', template="plotly_dark"
-                )
-                fig_bar.update_layout(
-                    plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-                    xaxis=dict(showgrid=True, gridcolor='#30363d'),
-                    yaxis=dict(showgrid=False),
-                    margin=dict(t=20, b=20, l=20, r=20), coloraxis_showscale=False
-                )
-                st.plotly_chart(fig_bar, use_container_width=True)
-            else:
-                st.info("Aucune attaque détectée pour le moment. En attente de trafic malveillant...")
+        st.error("MongoDB offline")
 
-        # DL chart
-        st.markdown("---")
-        st.subheader("🧠 Prédictions Deep Learning (CNN-BiLSTM-Transformer)")
-        if 'dl_prediction' in df.columns:
-            dl_attack_df = df[df['status'] == 'ATTACK']
-            if not dl_attack_df.empty:
-                dl_counts = dl_attack_df['dl_prediction'].value_counts().reset_index()
-                dl_counts.columns = ["Type d'Attaque (DL)", 'Nombre']
-                dl_counts = dl_counts.sort_values(by='Nombre', ascending=True)
-                fig_dl = px.bar(
-                    dl_counts, y="Type d'Attaque (DL)", x='Nombre',
-                    orientation='h', color='Nombre',
-                    color_continuous_scale='Purples', template="plotly_dark"
-                )
-                fig_dl.update_layout(
-                    plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-                    xaxis=dict(showgrid=True, gridcolor='#30363d'),
-                    yaxis=dict(showgrid=False),
-                    margin=dict(t=20, b=20, l=20, r=20), coloraxis_showscale=False
-                )
-                st.plotly_chart(fig_dl, use_container_width=True)
-            else:
-                st.info("Aucune attaque détectée par le modèle DL pour le moment.")
-        else:
-            st.info("Les prédictions DL apparaîtront après la prochaine exécution du pipeline.")
+st.markdown("---")
 
-        st.markdown("---")
-        
-        # Recent Alerts Section
-        st.subheader("🚨 Dernières Alertes & Prédictions")
-        
-        # Filter table option
-        view_filter = st.radio(
-            "Filtrer le tableau",
-            ["Toutes les prédictions", "Alertes d'attaques uniquement"],
-            horizontal=True
-        )
-        
-        # Sort by timestamp descending to show latest first
-        table_df = df.sort_values(by='timestamp', ascending=False)
-        
-        if view_filter == "Alertes d'attaques uniquement":
-            table_df = table_df[table_df['status'] == 'ATTACK']
-            
-        # Select latest 100 entries
-        display_df = table_df.head(100).copy()
-        
-        if not display_df.empty:
-            # Format datetime
-            display_df['timestamp'] = display_df['timestamp'].dt.strftime('%Y-%m-%d %H:%M:%S')
-            
-            # Map columns for better visibility
-            display_df['true_label'] = display_df['true_label'].map(
-                lambda x: f"{ATTACK_LABELS_MAP.get(str(x), str(x))} ({x})" if str(x) != "None" else "None"
-            )
-            display_df['rf_prediction'] = display_df['rf_prediction'].map(
-                lambda x: f"{ATTACK_LABELS_MAP.get(str(x), str(x))} ({x})" if str(x) != "None" else "None"
-            )
-            if 'xgb_attack_type' in display_df.columns:
-                display_df['xgb_attack_type'] = display_df['xgb_attack_type'].map(
-                    lambda x: f"{ATTACK_LABELS_MAP.get(str(x), str(x))} ({x})" if str(x) not in ("None", "nan") else "None"
-                )
-            # legacy support
-            if 'attack_type' in display_df.columns and 'xgb_attack_type' not in display_df.columns:
-                display_df['attack_type'] = display_df['attack_type'].map(
-                    lambda x: f"{ATTACK_LABELS_MAP.get(str(x), str(x))} ({x})" if str(x) != "None" else "None"
-                )
-            
-            # Style helper
-            def highlight_status(row):
-                styles = [''] * len(row)
-                status_idx = row.index.get_loc('status')
-                if row['status'] == 'ATTACK':
-                    styles[status_idx] = 'background-color: rgba(248, 81, 73, 0.2); color: #ff7b72; font-weight: bold;'
-                else:
-                    styles[status_idx] = 'background-color: rgba(46, 160, 67, 0.2); color: #56d364;'
-                return styles
-            
-            # Show dataframe with styled status column
-            if hasattr(display_df.style, 'map'):
-                styled_table = display_df.style.apply(highlight_status, axis=1)
-            else:
-                styled_table = display_df.style.apply(highlight_status, axis=1)
-                
-            st.dataframe(
-                styled_table,
-                column_config={
-                    "timestamp":      "Horodatage",
-                    "flow_id":        "ID Flux",
-                    "true_label":     "Vraie Classe",
-                    "rf_prediction":  "Préd. Random Forest",
-                    "dl_prediction":  "Préd. Deep Learning",
-                    "xgb_attack_type": "Type Attaque (XGBoost)",
-                    "attack_type":    "Type Attaque (XGBoost)",
-                    "status":         "Statut",
-                    "model_used":     "Modèle Utilisé"
-                },
-                use_container_width=True,
-                hide_index=True
-            )
-        else:
-            st.info("Aucun enregistrement ne correspond aux critères de filtrage.")
+if not ok:
+    st.error("Cannot connect to MongoDB. Make sure `docker compose up -d` is running.")
+    st.stop()
 
-# Handle auto-refresh rerun loop
-if auto_refresh:
+if '_id' in df.columns:
+    df = df.drop(columns=['_id'])
+if 'timestamp' in df.columns:
+    df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
+
+if df.empty:
+    st.info("Waiting for data… Start Spark and the Kafka producer.")
     time.sleep(refresh_interval)
     st.rerun()
+
+# ── KPIs ──────────────────────────────────────────────────────────────────────
+total   = len(df)
+normal  = (df['status'] == 'NORMAL').sum()
+attacks = (df['status'] == 'ATTACK').sum()
+atk_pct = round(attacks / total * 100, 1) if total else 0
+xgb_types = df[df['status']=='ATTACK']['xgb_attack_type'].nunique() if 'xgb_attack_type' in df.columns else 0
+
+k1, k2, k3, k4 = st.columns(4)
+for col, label, val, sub, color in [
+    (k1, "Total Flows",   f"{total:,}",   "analyzed",        "#60a5fa"),
+    (k2, "Normal",        f"{normal:,}",  "benign traffic",  "#10b981"),
+    (k3, "Attacks",       f"{attacks:,}", f"{atk_pct}% of total", "#ef4444"),
+    (k4, "Attack Types",  xgb_types,      "unique (XGBoost)","#a78bfa"),
+]:
+    col.markdown(f"""
+    <div class="kpi">
+        <div class="kpi-label">{label}</div>
+        <div class="kpi-val" style="color:{color}">{val}</div>
+        <div class="kpi-sub">{sub}</div>
+    </div>""", unsafe_allow_html=True)
+
+st.markdown("<br>", unsafe_allow_html=True)
+
+# ── Row 1: Donut + Timeline ───────────────────────────────────────────────────
+c1, c2 = st.columns([1, 2])
+
+with c1:
+    st.markdown('<div class="section-title">Traffic Distribution</div>', unsafe_allow_html=True)
+    fig = go.Figure(go.Pie(
+        labels=["Normal", "Attack"],
+        values=[normal, attacks],
+        hole=0.65,
+        marker_colors=["#10b981", "#ef4444"],
+        textinfo="percent",
+        hovertemplate="%{label}: %{value:,}<extra></extra>",
+    ))
+    fig.add_annotation(text=f"<b>{atk_pct}%</b><br>attacks",
+                       x=0.5, y=0.5, showarrow=False,
+                       font=dict(size=16, color="#e2e8f0"))
+    fig.update_layout(
+        showlegend=True, margin=dict(t=10,b=10,l=10,r=10),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        legend=dict(orientation="h", y=-0.05, x=0.5, xanchor="center",
+                    font=dict(color="#94a3b8"))
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+with c2:
+    st.markdown('<div class="section-title">Flow Activity Over Time</div>', unsafe_allow_html=True)
+    if 'timestamp' in df.columns and not df['timestamp'].isna().all():
+        timeline = df.copy()
+        timeline['minute'] = timeline['timestamp'].dt.floor('1min')
+        tl = timeline.groupby(['minute','status']).size().reset_index(name='count')
+        fig2 = px.area(tl, x='minute', y='count', color='status',
+                       color_discrete_map={'NORMAL':'#10b981','ATTACK':'#ef4444'},
+                       template='plotly_dark')
+        fig2.update_layout(
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            margin=dict(t=10,b=10,l=10,r=10),
+            xaxis=dict(showgrid=False, color="#475569"),
+            yaxis=dict(showgrid=True, gridcolor="#1e2d3d", color="#475569"),
+            legend=dict(orientation="h", y=-0.15, font=dict(color="#94a3b8")),
+        )
+        st.plotly_chart(fig2, use_container_width=True)
+    else:
+        st.info("Timeline will appear once timestamps are available.")
+
+# ── Row 2: XGBoost + DL charts ────────────────────────────────────────────────
+atk_df = df[df['status'] == 'ATTACK']
+
+r2c1, r2c2 = st.columns(2)
+
+with r2c1:
+    st.markdown('<div class="section-title">Attack Types — XGBoost</div>', unsafe_allow_html=True)
+    if 'xgb_attack_type' in atk_df.columns and not atk_df.empty:
+        xc = atk_df['xgb_attack_type'].map(
+            lambda x: ATTACK_LABELS.get(str(x), str(x))
+        ).value_counts().reset_index()
+        xc.columns = ["Attack Type", "Count"]
+        xc = xc.sort_values("Count")
+        fig3 = px.bar(xc, y="Attack Type", x="Count", orientation='h',
+                      color="Attack Type", color_discrete_sequence=CHART_COLORS,
+                      template="plotly_dark")
+        fig3.update_layout(
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            showlegend=False, margin=dict(t=10,b=10,l=10,r=10),
+            xaxis=dict(showgrid=True, gridcolor="#1e2d3d", color="#475569"),
+            yaxis=dict(showgrid=False, color="#94a3b8"),
+        )
+        st.plotly_chart(fig3, use_container_width=True)
+    else:
+        st.info("No attacks detected yet.")
+
+with r2c2:
+    st.markdown('<div class="section-title">Attack Types — Deep Learning (CNN-BiLSTM)</div>', unsafe_allow_html=True)
+    if 'dl_prediction' in atk_df.columns and not atk_df.empty:
+        dc = atk_df['dl_prediction'].value_counts().reset_index()
+        dc.columns = ["Attack Type", "Count"]
+        dc = dc.sort_values("Count")
+        fig4 = px.bar(dc, y="Attack Type", x="Count", orientation='h',
+                      color="Attack Type", color_discrete_sequence=CHART_COLORS[::-1],
+                      template="plotly_dark")
+        fig4.update_layout(
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            showlegend=False, margin=dict(t=10,b=10,l=10,r=10),
+            xaxis=dict(showgrid=True, gridcolor="#1e2d3d", color="#475569"),
+            yaxis=dict(showgrid=False, color="#94a3b8"),
+        )
+        st.plotly_chart(fig4, use_container_width=True)
+    else:
+        st.info("No DL predictions yet.")
+
+# ── Live Feed Table ───────────────────────────────────────────────────────────
+st.markdown("---")
+st.markdown('<div class="section-title">Live Predictions Feed</div>', unsafe_allow_html=True)
+
+f1, f2 = st.columns([2, 1])
+with f1:
+    view = st.radio("Show", ["All", "Attacks only", "Normal only"], horizontal=True)
+with f2:
+    n_rows = st.select_slider("Rows", [25, 50, 100, 200], value=50)
+
+table = df.sort_values('timestamp', ascending=False) if 'timestamp' in df.columns else df
+if view == "Attacks only":
+    table = table[table['status'] == 'ATTACK']
+elif view == "Normal only":
+    table = table[table['status'] == 'NORMAL']
+
+display = table.head(n_rows).copy()
+
+# Human-readable columns
+if 'true_label' in display.columns:
+    display['true_label'] = display['true_label'].map(lambda x: ATTACK_LABELS.get(str(x), str(x)))
+if 'rf_prediction' in display.columns:
+    display['rf_prediction'] = display['rf_prediction'].map(lambda x: ATTACK_LABELS.get(str(x), str(x)))
+if 'xgb_attack_type' in display.columns:
+    display['xgb_attack_type'] = display['xgb_attack_type'].map(
+        lambda x: ATTACK_LABELS.get(str(x), str(x)) if str(x) not in ("None","nan") else "—"
+    )
+if 'timestamp' in display.columns:
+    display['timestamp'] = display['timestamp'].dt.strftime('%H:%M:%S')
+
+# Select columns to show
+cols_order = [c for c in ['timestamp','flow_id','status','true_label',
+              'rf_prediction','xgb_attack_type','dl_prediction','model_used'] if c in display.columns]
+display = display[cols_order]
+
+def color_status(val):
+    if val == 'ATTACK':
+        return 'color: #ef4444; font-weight: 700'
+    elif val == 'NORMAL':
+        return 'color: #10b981; font-weight: 600'
+    return ''
+
+styled = display.style.map(color_status, subset=['status']) if 'status' in display.columns else display.style
+
+st.dataframe(
+    styled,
+    column_config={
+        "timestamp":       st.column_config.TextColumn("Time"),
+        "flow_id":         st.column_config.NumberColumn("Flow ID"),
+        "status":          st.column_config.TextColumn("Status"),
+        "true_label":      st.column_config.TextColumn("True Label"),
+        "rf_prediction":   st.column_config.TextColumn("Random Forest"),
+        "xgb_attack_type": st.column_config.TextColumn("XGBoost"),
+        "dl_prediction":   st.column_config.TextColumn("Deep Learning"),
+        "model_used":      st.column_config.TextColumn("Models"),
+    },
+    use_container_width=True,
+    hide_index=True,
+    height=400,
+)
+
+# ── Footer ────────────────────────────────────────────────────────────────────
+st.markdown(f"<p style='text-align:center;color:#334155;font-size:0.75rem;margin-top:20px'>Last updated: {datetime.now().strftime('%H:%M:%S')} · Auto-refresh every {refresh_interval}s</p>", unsafe_allow_html=True)
+
+time.sleep(refresh_interval)
+st.rerun()
