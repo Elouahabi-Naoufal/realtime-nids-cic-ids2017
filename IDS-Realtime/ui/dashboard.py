@@ -11,16 +11,20 @@ st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
 * { font-family: 'Inter', sans-serif; }
-.stApp { background: #060b14; color: #e2e8f0; }
-section[data-testid="stSidebar"] { background: #0d1520; border-right: 1px solid #1e2d3d; }
-.kpi { background: linear-gradient(135deg,#0d1520,#111c2a); border:1px solid #1e2d3d; border-radius:12px; padding:22px 20px; text-align:center; }
-.kpi-label { font-size:.72rem; color:#64748b; text-transform:uppercase; letter-spacing:.1em; font-weight:600; margin-bottom:6px; }
+.kpi {
+    background: var(--background-color, transparent);
+    border: 1px solid rgba(128,128,128,0.2);
+    border-radius: 12px;
+    padding: 22px 20px;
+    text-align: center;
+}
+.kpi-label { font-size:.72rem; color:var(--text-color); opacity:.6; text-transform:uppercase; letter-spacing:.1em; font-weight:600; margin-bottom:6px; }
 .kpi-val { font-size:2.4rem; font-weight:800; line-height:1; }
-.kpi-sub { font-size:.75rem; color:#475569; margin-top:4px; }
-.live-badge { display:inline-flex; align-items:center; gap:6px; background:rgba(16,185,129,.1); border:1px solid rgba(16,185,129,.3); border-radius:20px; padding:4px 12px; font-size:.75rem; color:#10b981; font-weight:600; }
+.kpi-sub { font-size:.75rem; opacity:.5; margin-top:4px; }
+.live-badge { display:inline-flex; align-items:center; gap:6px; background:rgba(16,185,129,.1); border:1px solid rgba(16,185,129,.4); border-radius:20px; padding:4px 12px; font-size:.75rem; color:#10b981; font-weight:600; }
 .live-dot { width:8px; height:8px; background:#10b981; border-radius:50%; animation:pulse 1.5s infinite; }
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
-.section-title { font-size:.8rem; color:#64748b; text-transform:uppercase; letter-spacing:.1em; font-weight:600; margin-bottom:12px; }
+.section-title { font-size:.8rem; opacity:.5; text-transform:uppercase; letter-spacing:.1em; font-weight:600; margin-bottom:12px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -126,7 +130,7 @@ def refresh_data():
                                showarrow=False, font=dict(size=16, color="#e2e8f0"))
             fig.update_layout(showlegend=True, margin=dict(t=10,b=10,l=10,r=10),
                 paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                legend=dict(orientation="h", y=-0.05, x=0.5, xanchor="center", font=dict(color="#94a3b8")))
+                legend=dict(orientation="h", y=-0.05, x=0.5, xanchor="center", font=dict(color="gray")))
             st.plotly_chart(fig, use_container_width=True)
 
         with c2:
@@ -137,12 +141,12 @@ def refresh_data():
                 tl = tl.groupby(['minute','status']).size().reset_index(name='count')
                 fig2 = px.area(tl, x='minute', y='count', color='status',
                                color_discrete_map={'NORMAL':'#10b981','ATTACK':'#ef4444'},
-                               template='plotly_dark')
+                               template="plotly")
                 fig2.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                     margin=dict(t=10,b=10,l=10,r=10),
-                    xaxis=dict(showgrid=False, color="#475569"),
-                    yaxis=dict(showgrid=True, gridcolor="#1e2d3d", color="#475569"),
-                    legend=dict(orientation="h", y=-0.15, font=dict(color="#94a3b8")))
+                    xaxis=dict(showgrid=False, color="gray"),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(128,128,128,0.2)", color="gray"),
+                    legend=dict(orientation="h", y=-0.15, font=dict(color="gray")))
                 st.plotly_chart(fig2, use_container_width=True)
 
         # Row 2: XGBoost + DL
@@ -153,11 +157,11 @@ def refresh_data():
                 xc = atk_df['xgb_attack_type'].map(lambda x: ATTACK_LABELS.get(str(x), str(x))).value_counts().reset_index()
                 xc.columns = ["Type","Count"]
                 fig3 = px.bar(xc.sort_values("Count"), y="Type", x="Count", orientation='h',
-                              color="Type", color_discrete_sequence=COLORS, template="plotly_dark")
+                              color="Type", color_discrete_sequence=COLORS, template="plotly")
                 fig3.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                     showlegend=False, margin=dict(t=10,b=10,l=10,r=10),
-                    xaxis=dict(showgrid=True, gridcolor="#1e2d3d", color="#475569"),
-                    yaxis=dict(showgrid=False, color="#94a3b8"))
+                    xaxis=dict(showgrid=True, gridcolor="rgba(128,128,128,0.2)", color="gray"),
+                    yaxis=dict(showgrid=False, color="gray"))
                 st.plotly_chart(fig3, use_container_width=True)
             else:
                 st.info("No attacks detected yet.")
@@ -168,11 +172,11 @@ def refresh_data():
                 dc = atk_df['dl_prediction'].value_counts().reset_index()
                 dc.columns = ["Type","Count"]
                 fig4 = px.bar(dc.sort_values("Count"), y="Type", x="Count", orientation='h',
-                              color="Type", color_discrete_sequence=COLORS[::-1], template="plotly_dark")
+                              color="Type", color_discrete_sequence=COLORS[::-1], template="plotly")
                 fig4.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                     showlegend=False, margin=dict(t=10,b=10,l=10,r=10),
-                    xaxis=dict(showgrid=True, gridcolor="#1e2d3d", color="#475569"),
-                    yaxis=dict(showgrid=False, color="#94a3b8"))
+                    xaxis=dict(showgrid=True, gridcolor="rgba(128,128,128,0.2)", color="gray"),
+                    yaxis=dict(showgrid=False, color="gray"))
                 st.plotly_chart(fig4, use_container_width=True)
             else:
                 st.info("No DL predictions yet.")
@@ -214,6 +218,6 @@ def refresh_data():
             use_container_width=True, hide_index=True, height=400,
         )
 
-        st.markdown(f"<p style='text-align:center;color:#334155;font-size:.75rem;margin-top:10px'>Last updated: {datetime.now().strftime('%H:%M:%S')} · refreshing every {refresh_interval}s</p>", unsafe_allow_html=True)
+        st.markdown(f"<p style='text-align:center;opacity:.4;font-size:.75rem;margin-top:10px'>Last updated: {datetime.now().strftime('%H:%M:%S')} · refreshing every {refresh_interval}s</p>", unsafe_allow_html=True)
 
 refresh_data()
