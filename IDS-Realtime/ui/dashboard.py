@@ -63,11 +63,13 @@ st.markdown("---")
 main_area = st.empty()   # all dynamic content goes here
 
 # Widgets must be OUTSIDE the fragment
-f1, f2 = st.columns([2,1])
+f1, f2, f3 = st.columns([2, 1, 2])
 with f1:
     view = st.radio("Show", ["All","Attacks only","Normal only"], horizontal=True)
 with f2:
     n_rows = st.select_slider("Rows", [25,50,100,200], value=50)
+with f3:
+    search = st.text_input("🔍 Search (flow ID, label, attack type...)", "")
 
 # ── Fragment: only this re-renders on refresh ─────────────────────────────────
 @st.fragment(run_every=refresh_interval)
@@ -188,6 +190,10 @@ def refresh_data():
         table = df.sort_values('timestamp', ascending=False) if 'timestamp' in df.columns else df
         if view == "Attacks only":   table = table[table['status']=='ATTACK']
         elif view == "Normal only":  table = table[table['status']=='NORMAL']
+
+        if search.strip():
+            mask = table.astype(str).apply(lambda col: col.str.contains(search.strip(), case=False, na=False)).any(axis=1)
+            table = table[mask]
 
         disp = table.head(n_rows).copy()
         if 'true_label'    in disp.columns: disp['true_label']    = disp['true_label'].map(lambda x: ATTACK_LABELS.get(str(x), str(x)))
