@@ -58,6 +58,13 @@ with h2:
 st.markdown("---")
 main_area = st.empty()   # all dynamic content goes here
 
+# Widgets must be OUTSIDE the fragment
+f1, f2 = st.columns([2,1])
+with f1:
+    view = st.radio("Show", ["All","Attacks only","Normal only"], horizontal=True)
+with f2:
+    n_rows = st.select_slider("Rows", [25,50,100,200], value=50)
+
 # ── Fragment: only this re-renders on refresh ─────────────────────────────────
 @st.fragment(run_every=refresh_interval)
 def refresh_data():
@@ -173,11 +180,6 @@ def refresh_data():
         # Live feed
         st.markdown("---")
         st.markdown('<div class="section-title">Live Predictions Feed</div>', unsafe_allow_html=True)
-        f1, f2 = st.columns([2,1])
-        with f1:
-            view = st.radio("Show", ["All","Attacks only","Normal only"], horizontal=True)
-        with f2:
-            n_rows = st.select_slider("Rows", [25,50,100,200], value=50)
 
         table = df.sort_values('timestamp', ascending=False) if 'timestamp' in df.columns else df
         if view == "Attacks only":   table = table[table['status']=='ATTACK']
