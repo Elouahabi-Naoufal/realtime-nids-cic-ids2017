@@ -123,35 +123,29 @@ def predict_batch(batch_df, batch_id):
     true_labels = pdf.get("true_label", pd.Series(["unknown"] * len(pdf)))
 
     # RF prediction (batch)
-    X_rf   = prepare_features(pdf, rf_features)
+    X_rf     = prepare_features(pdf, rf_features)
     rf_preds = rf_model.predict(X_rf)
-
-    # DL prediction (batch) — reshape to (N, 44, 1)
-    X_dl = prepare_features(pdf, rf_features).values.reshape(-1, len(rf_features), 1).astype("float32")
-    dl_probs = dl_model.predict(X_dl, verbose=0)
-    dl_preds = np.argmax(dl_probs, axis=1)
 
     final_results = []
 
     for idx in range(len(rf_preds)):
         rf_label = decode_rf(rf_preds[idx])
-        dl_label = decode_dl(int(dl_preds[idx]))
 
         result = {
-            "flow_id":       int(flow_ids.iloc[idx]),
-            "timestamp":     datetime.now(timezone.utc).isoformat(),
-            "true_label":    str(true_labels.iloc[idx]).strip(),
-            "rf_prediction": rf_label,
-            "dl_prediction": dl_label,
-            "status":        None,
+            "flow_id":         int(flow_ids.iloc[idx]),
+            "timestamp":       datetime.now(timezone.utc).isoformat(),
+            "true_label":      str(true_labels.iloc[idx]).strip(),
+            "rf_prediction":   rf_label,
+            "dl_prediction":   "None",
+            "status":          None,
             "xgb_attack_type": None,
-            "model_used":    None,
+            "model_used":      None,
         }
 
         if is_benign(rf_label):
-            result["status"]        = "NORMAL"
+            result["status"]          = "NORMAL"
             result["xgb_attack_type"] = "None"
-            result["model_used"]    = "Random Forest + DL"
+            result["model_used"]      = "Random Forest"
         else:
             result["status"] = "ATTACK"
 
@@ -161,7 +155,13 @@ def predict_batch(batch_df, batch_id):
             xgb_out = xgb_model.predict(dmatrix)
             xgb_idx = int(np.argmax(xgb_out)) if xgb_out.ndim == 1 else int(np.argmax(xgb_out[0]))
             result["xgb_attack_type"] = decode_xgb(xgb_idx)
-            result["model_used"]      = "Random Forest + XGBoost + DL"
+
+            # DL (per-row, only on attacks)
+            X_dl    = prepare_features(pdf.iloc[[idx]], rf_features).values.reshape(1, len(rf_features), 1).astype("float32")
+            dl_prob = dl_model.predict(X_dl, verbose=0)
+            result["dl_prediction"] = decode_dl(int(np.argmax(dl_prob)))
+
+            result["model_used"] = "Random Forest + XGBoost + DL"
 
         final_results.append(result)
 
