@@ -33,9 +33,9 @@ XGB_FEATURES_PATH = "models/xgb_features.json"
 # DL model outputs 11 classes (attack-only, trained on CIC-IDS2017 subset)
 # Index → attack name mapping (order from training)
 DL_CLASS_NAMES = [
-    "FTP-Patator", "SSH-Patator", "DoS Slowloris", "DoS Slowhttptest",
-    "DoS Hulk", "DoS GoldenEye", "Heartbleed", "PortScan",
-    "DDoS", "Bot", "Web Attack"
+    "Bot", "DDoS", "DoS GoldenEye", "DoS Hulk", "DoS Slowhttptest",
+    "DoS Slowloris", "FTP-Patator", "PortScan", "SSH-Patator",
+    "Web Attack Brute Force", "Web Attack XSS"
 ]
 
 # =========================
