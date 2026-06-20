@@ -1,4 +1,6 @@
 services:
+
+  # ── Infrastructure ────────────────────────────────────────────────
   zookeeper:
     image: confluentinc/cp-zookeeper:7.6.1
     container_name: zookeeper
@@ -28,25 +30,8 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
     restart: unless-stopped
-
-  kafka-init:
-    image: confluentinc/cp-kafka:7.6.1
-    container_name: kafka-init
-    depends_on:
-      - kafka
-    command: >
-      bash -c "
-      echo 'Attente du démarrage Kafka...' &&
-      cub kafka-ready -b kafka:29092 1 60 &&
-      echo 'Création du topic network-flows si nécessaire...' &&
-      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic network-flows --partitions 1 --replication-factor 1 &&
-      echo 'Topics disponibles :' &&
-      kafka-topics --bootstrap-server kafka:29092 --list
-      "
-    restart: "no"
 
   mongodb:
     image: mongo:7
@@ -57,6 +42,64 @@ services:
     volumes:
       - mongo_data:/data/db
     restart: unless-stopped
+
+  # ── IDS Services ──────────────────────────────────────────────────
+  spark:
+    build: .
+    container_name: spark
+    network_mode: host          # needed so Spark can reach kafka/mongodb on localhost
+    environment:
+      KERAS_BACKEND: torch
+      PYSPARK_PYTHON: python
+    volumes:
+      - ./models:/app/models
+      - ./checkpoints:/app/checkpoints
+    command: >
+      spark-submit
+      --packages org.apache.spark:spark-sql-kafka-0-10_2.13:4.1.2
+      spark/spark_streaming_prediction.py
+    depends_on:
+      - kafka
+      - mongodb
+    restart: on-failure
+
+  dashboard:
+    build: .
+    container_name: dashboard
+    ports:
+      - "8501:8501"
+    command: streamlit run ui/dashboard.py --server.address 0.0.0.0 --server.port 8501
+    depends_on:
+      - mongodb
+    restart: unless-stopped
+
+  # ── Live Producer (optional — comment out to use CSV producer) ────
+  producer-live:
+    build: .
+    container_name: producer-live
+    network_mode: host          # needs host network to capture real packets
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    environment:
+      INTERFACE: wlo1           # change to your interface (eno2, eth0, etc.)
+    command: >
+      sh -c "python producer/kafka_producer_live.py --interface $$INTERFACE"
+    depends_on:
+      - kafka
+    profiles:
+      - live                    # only starts with: docker compose --profile live up
+
+  # ── CSV Producer (default demo mode) ─────────────────────────────
+  producer-csv:
+    build: .
+    container_name: producer-csv
+    network_mode: host
+    command: python producer/kafka_producer.py --limit 1000 --sleep 0.05
+    depends_on:
+      - kafka
+    profiles:
+      - demo                    # only starts with: docker compose --profile demo up
 
 volumes:
   mongo_data:
